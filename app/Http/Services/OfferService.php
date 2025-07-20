@@ -457,6 +457,9 @@ class OfferService
                 return $this->streamCsv($response);
             case 'download':
                 return response()->download(storage_path("app/$fullPath"), 'offers_export.csv');
+            case 'debug':
+                var_dump($response);
+                break;
         }
 
     }
