@@ -723,31 +723,29 @@ class OfferService
     public function applyBulkFilters(User $user, OfferBulkDto $dto): Builder|HasMany
     {
         $query = Offer::query()
-            ->where('user_id', $user->id)
-            ->where('status', $dto->status);
+            ->with(['product', 'warehouse', 'incoterms', 'countries'])
+            ->where('business_id', $user->business_id);
+
+        if ($dto->ids) {
+            $query->whereIn('id', $dto->ids);
+        }
+
+        if ($dto->status) {
+            $query->where('status', $dto->status);
+        }
 
         if ($dto->name) {
             $query->where('name', 'like', '%' . $dto->name . '%');
         }
 
-        if ($dto->productId) {
-            $query->where('product_id', $dto->productId);
+        if ($dto->productName) {
+            $query->whereHas('product', function ($q) use ($dto) {
+                $q->where('name', 'like', '%' . $dto->productName . '%');
+            });
         }
 
         if ($dto->warehouseId) {
             $query->where('warehouse_id', $dto->warehouseId);
-        }
-
-        if ($dto->minPrice !== null) {
-            $query->whereHas('prices', function ($q) use ($dto) {
-                $q->where('price', '>=', $dto->minPrice);
-            });
-        }
-
-        if ($dto->maxPrice !== null) {
-            $query->whereHas('prices', function ($q) use ($dto) {
-                $q->where('price', '<=', $dto->maxPrice);
-            });
         }
 
         return $query;
