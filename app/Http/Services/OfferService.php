@@ -731,7 +731,7 @@ class OfferService
         }
 
         if ($dto->status) {
-            $query->where('status', $dto->status);
+            //$query->where('status', $dto->status);
         }
 
         if ($dto->name) {
@@ -766,23 +766,14 @@ class OfferService
     public function search(OfferSearchDto $dto): Builder
     {
         $query = Offer::query()
-            ->with([
-                'product' => function ($query) {
-                    $query->with('category', 'parameters', 'files');
-                },
-                'user.paymentMethod',
-                'user.stripeAccount',
-                'user.payPalIntegration',
-                'user.permissions',
-            ])
-            ->with('warehouse.address', 'incoterms')
+            ->with(['product', 'warehouse', 'incoterms', 'countries'])
             ->where('status', OfferStatus::Active);
 
-        if ($dto->searchTerm) {
+        if ($dto->search) {
             $query->where(function ($q) use ($dto) {
-                $q->where('offers.name', 'like', '%' . $dto->searchTerm . '%')
+                $q->where('name', 'like', '%' . $dto->search . '%')
                     ->orWhereHas('product', function ($q) use ($dto) {
-                        $q->where('name', 'like', '%' . $dto->searchTerm . '%');
+                        $q->where('name', 'like', '%' . $dto->search . '%');
                     });
             });
         }
@@ -790,7 +781,7 @@ class OfferService
         if ($dto->sortBy) {
             $query->orderBy($dto->sortBy, $dto->orderBy);
         } else {
-            $query->orderBy('offers.created_at', 'desc');
+            $query->orderBy('created_at', 'desc');
         }
 
         return $query;
