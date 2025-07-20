@@ -321,7 +321,7 @@ class OfferService
         DB::table('offer_countries')->insert($countries);
     }
 
-    private function processIncotermForExport($incoterm): float|string|null
+    private function procesForExport($incoterm): float|string|null
     {
         if ($incoterm) {
             if ($incoterm->override_warehouse) {
@@ -375,9 +375,9 @@ class OfferService
             $incotermExw = $offer->incoterms->where('name', 'EXW')->all();
             $incotermFca = $offer->incoterms->where('name', 'FCA')->first();
 
-            $incotermCifExportValue = $this->processIncotermForExport($incotermCif[0]);
-            $incotermExwExportValue = $this->processIncotermForExport($incotermExw[0]);
-            $incotermFcaExportValue = $this->processIncotermForExport($incotermFca[0]);
+            $cifFOrExport = $this->procesForExport($incotermCif[0]);
+            $exfforexport = $this->procesForExport($incotermExw[0]);
+            $Fca_forExport = $this->procesForExport($incotermFca[0]);
 
 
             $shippingFromCountry = strtoupper($incotermCif?->shipping_from_country ?? $incotermExw?->shipping_from_country ?? $incotermFca?->shipping_from_country);
@@ -400,9 +400,9 @@ class OfferService
                 $offer->disable_buy_now_pay_later_payment ? 'NO' : 'YES',
                 $offer->allow_quick_purchase ? 'YES' : 'NO',
                 $offer->shipping_time,
-                $incotermCifExportValue,
-                $incotermExwExportValue,
-                $incotermFcaExportValue,
+                $cifFOrExport,
+                $exfforexport,
+                $Fca_forExport,
                 $shippingFromCountry,
                 $pickupAvailableInWeeks,
                 implode(', ', $offer->countries->where('value', false)->pluck('country_code')->toArray()),

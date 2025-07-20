@@ -24,7 +24,7 @@ class OfferExportController extends Controller
 //        $user = $request->user();
         if ($request->user_id) {
 //            Gate::authorize('exportImportOffers', $request->user());
-//            $user = User::find($request->user_id);
+          $user = User::find($request->user_id);
         }
         try {
             $path = $this->offerService->export($user, OfferBulkDto::fromRequest($request));
