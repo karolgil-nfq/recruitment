@@ -6,10 +6,12 @@ use App\Enums\OfferStatus;
 use App\Enums\OrderPaymentType;
 use App\Enums\UserPermission;
 use App\Http\Controllers\Controller;
+use App\Http\DataTransferObjects\OfferBulkDto;
 use App\Http\DataTransferObjects\OfferIndexDto;
 use App\Http\DataTransferObjects\OfferSearchDto;
 use App\Http\DataTransferObjects\OfferStoreDto;
 use App\Http\DataTransferObjects\UserOfferViewsGetDto;
+use App\Http\Requests\OfferBulkRequest;
 use App\Http\Requests\OfferStoreRequest;
 use App\Http\Requests\PaginationRequest;
 use App\Http\Resources\Basic\BasicOfferResource;
@@ -26,6 +28,8 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Gate;
+
+use function Sentry\captureException;
 
 
 class OfferController extends Controller
@@ -159,5 +163,20 @@ class OfferController extends Controller
         return DataArrayResource::make(
             $this->offerService->countOffers($request->user(), $request->boolean('admin'), $request->string('user_id'))
         );
+    }
+
+    public function export(OfferBulkRequest $request): DataArrayResource
+    {
+        try {
+            $path = $this->offerService->export($user, OfferBulkDto::fromRequest($request));
+        } catch (Exception $exception) {
+            captureException($exception);
+        }
+
+        return DataArrayResource::make([
+            'data' => [
+                'path' => $path,
+            ]
+        ]);
     }
 }

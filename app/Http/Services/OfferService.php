@@ -321,6 +321,175 @@ class OfferService
         DB::table('offer_countries')->insert($countries);
     }
 
+    private function procesForExport($incoterm): float|string|null
+    {
+        if ($incoterm) {
+            if ($incoterm->override_warehouse) {
+                if ($incoterm->value) {
+                    return $incoterm->price / 100;
+                } else {
+                    return 'DISABLED';
+                }
+            } else {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    public function export(User $user, OfferBulkDto $dto, $returnMode = "file")
+    {
+        $offers = $this->applyBulkFilters($user, $dto)
+            ->limit(10000)
+            ->orderBy('created_at', 'desc')
+            ->with('product', 'countries', 'incoterms', 'prices')
+            ->with('prices', function ($query) {
+                $query->whereNull('from');
+            })
+            ->with('product.parameters', function ($query) {
+                $query->whereIn('name', ['Name']);
+            })
+            ->get();
+
+        $response = [];
+        $countMaxPrices = 0;
+
+        foreach ($offers as $key => $offer) {
+            $price = $offer->prices->where('from', null)->first();
+
+            $prices = [
+                $offer->price_display_unit == "X" ? $price->price_mod : $price->price / 100
+            ];
+
+            foreach ($offer->prices->whereNotNull('from')->sortBy('from') as $priceKey => $price) {
+                $prices[] = $price->from;
+                $prices[] = $offer->price_display_unit == "Y" ? $price->price_mod : $price->price / 100;
+
+                $countMaxPrices = max($priceKey, $countMaxPrices);
+            }
+            if ($offer->created_at->lt(now()->subYear())) {
+                continue;
+            }
+
+            $incotermCif = $offer->incoterms->where('name', 'CIF')->all();
+            $incotermExw = $offer->incoterms->where('name', 'EXW')->all();
+            $incotermFca = $offer->incoterms->where('name', 'FCA')->first();
+
+            $cifFOrExport = $this->procesForExport($incotermCif[0]);
+            $exfforexport = $this->procesForExport($incotermExw[0]);
+            $Fca_forExport = $this->procesForExport($incotermFca[0]);
+
+
+            $shippingFromCountry = strtoupper($incotermCif?->shipping_from_country ?? $incotermExw?->shipping_from_country ?? $incotermFca?->shipping_from_country);
+            $pickupAvailableInWeeks = $incotermCif?->pickup_available_in_weeks ?? $incotermExw?->pickup_available_in_weeks ?? $incotermFca?->pickup_available_in_weeks;
+
+            $data = [
+                $offer->id,
+                $offer->product->parameters->where('name', 'Name')->first()?->pivot?->value,
+                $offer->original_name,
+                $offer->description,
+                $offer->availability_quantity,
+                $offer->full_containers_only ? 'Containes only' : ($offer->full_pallets_only ? ' pallets only' : 'Pieces'),
+                $offer->min_order_quantity,
+                $offer->shipping_available_from?->format('d/m/Y'),
+                $offer->expire_at?->format('d/m/Y'),
+                $offer->accept_escrow ? 'YES' : 'NO',
+                $offer->disable_payment_order ? 'NO' : 'YES',
+                $offer->disable_wire_transfer_payment ? 'NO' : 'YES',
+                $offer->disable_pay_pal_payment ? 'NO' : 'YES',
+                $offer->disable_buy_now_pay_later_payment ? 'NO' : 'YES',
+                $offer->allow_quick_purchase ? 'YES' : 'NO',
+                $offer->shipping_time,
+                $cifFOrExport,
+                $exfforexport,
+                $Fca_forExport,
+                $shippingFromCountry,
+                $pickupAvailableInWeeks,
+                implode(', ', $offer->countries->where('value', false)->pluck('country_code')->toArray()),
+                $offer->price_display_unit ? ucfirst($offer->price_display_unit->value) : ucfirst(OfferPriceDisplayUnit::Piece->value),
+            ];
+            $offer->exported_at = now();
+            $offer->save();
+
+            $response[] = array_merge($data, $prices);
+        }
+
+        $keys = [
+            'Offer id',
+            'Product name',
+            'Original name',
+            'Min order quantity',
+            'Shipping available from date',
+            'Offer expiry at',
+            'Offer expiry at',
+            'Accept secure payment',
+            'Accept PayPal payment',
+            'Enable payment order generation',
+            'Shipping Time (days)',
+            'Shipping Time (days)',
+            'CIF delivery price',
+            'FCA delivery price',
+            'Excluded delivery countries',
+            'Excluded delivery countries',
+            'Price unit',
+            'price_range_amount_1',
+        ];
+
+        for ($i = 2; $i <= $countMaxPrices + 3; $i++) {
+            $keys[] = "price_range_min_qty_$i";
+            $keys[] = "price_range_amount_$i";
+        }
+
+        $random = Str::random();
+        $collection = FileCollection::CsvExportOffers->value;
+        $fullPath = "export/$collection/$random/export_offers.xlsx";
+
+        Excel::store(
+            new CsvImportFailedOffers(array_merge_recursive([$keys], $response)),
+            $fullPath,
+            config('filesystem.default'),
+            null,
+        );
+
+
+        switch( $returnMode){
+            case 'file':
+                return $fullPath;
+            case 'stream':
+                return $this->streamCsv($response);
+            case 'download':
+                return response()->download(storage_path("app/$fullPath"), 'offers_export.csv');
+            case 'debug':
+                var_dump($response);
+                break;
+        }
+
+    }
+
+    protected function streamCsv($offers)
+    {
+        return response()->streamDownload(function () use ($offers) {
+            $out = fopen('php://output', 'w');
+
+            fputcsv($out, ['ID', 'Name', 'Price', 'Incoterm', 'Countries']);
+
+            foreach ($offers as $row) {
+                $price = $row->prices[0]->price ?? 0;
+                $name = $row->product->parameters->first()?->pivot?->value ?? 'Unnamed';
+                $countries = implode(';', $row->countries->pluck('country_code')->toArray());
+                $incoterm = $row->incoterms->first()->name ?? 'n/a';
+                fputcsv($out, [
+                    $row->id,
+                    $name,
+                    $price,
+                    strtoupper($incoterm),
+                    $countries,
+                ]);
+            }
+
+            fclose($out);
+        }, 'offers_export.csv');
+    }
 
     protected function handlePrices(OfferStoreDto $dto, Product $product, Offer $offer, bool $clearExisting = false): void
     {
@@ -554,31 +723,29 @@ class OfferService
     public function applyBulkFilters(User $user, OfferBulkDto $dto): Builder|HasMany
     {
         $query = Offer::query()
-            ->where('user_id', $user->id)
-            ->where('status', $dto->status);
+            ->with(['product', 'warehouse', 'incoterms', 'countries'])
+            ->where('business_id', $user->business_id);
+
+        if ($dto->ids) {
+            $query->whereIn('id', $dto->ids);
+        }
+
+        if ($dto->status) {
+            //$query->where('status', $dto->status);
+        }
 
         if ($dto->name) {
             $query->where('name', 'like', '%' . $dto->name . '%');
         }
 
-        if ($dto->productId) {
-            $query->where('product_id', $dto->productId);
+        if ($dto->productName) {
+            $query->whereHas('product', function ($q) use ($dto) {
+                $q->where('name', 'like', '%' . $dto->productName . '%');
+            });
         }
 
         if ($dto->warehouseId) {
             $query->where('warehouse_id', $dto->warehouseId);
-        }
-
-        if ($dto->minPrice !== null) {
-            $query->whereHas('prices', function ($q) use ($dto) {
-                $q->where('price', '>=', $dto->minPrice);
-            });
-        }
-
-        if ($dto->maxPrice !== null) {
-            $query->whereHas('prices', function ($q) use ($dto) {
-                $q->where('price', '<=', $dto->maxPrice);
-            });
         }
 
         return $query;
@@ -599,23 +766,14 @@ class OfferService
     public function search(OfferSearchDto $dto): Builder
     {
         $query = Offer::query()
-            ->with([
-                'product' => function ($query) {
-                    $query->with('category', 'parameters', 'files');
-                },
-                'user.paymentMethod',
-                'user.stripeAccount',
-                'user.payPalIntegration',
-                'user.permissions',
-            ])
-            ->with('warehouse.address', 'incoterms')
+            ->with(['product', 'warehouse', 'incoterms', 'countries'])
             ->where('status', OfferStatus::Active);
 
-        if ($dto->searchTerm) {
+        if ($dto->search) {
             $query->where(function ($q) use ($dto) {
-                $q->where('offers.name', 'like', '%' . $dto->searchTerm . '%')
+                $q->where('name', 'like', '%' . $dto->search . '%')
                     ->orWhereHas('product', function ($q) use ($dto) {
-                        $q->where('name', 'like', '%' . $dto->searchTerm . '%');
+                        $q->where('name', 'like', '%' . $dto->search . '%');
                     });
             });
         }
@@ -623,7 +781,7 @@ class OfferService
         if ($dto->sortBy) {
             $query->orderBy($dto->sortBy, $dto->orderBy);
         } else {
-            $query->orderBy('offers.created_at', 'desc');
+            $query->orderBy('created_at', 'desc');
         }
 
         return $query;
